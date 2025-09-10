@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 import stripe
 
 app = Flask(__name__)
+
 from flask import render_template_string
 
 @app.route("/", methods=["GET"])
@@ -159,6 +160,7 @@ import os
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))  # Render gives us a port
     app.run(host="0.0.0.0", port=port, debug=True)
+
 
 
 
