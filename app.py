@@ -1,16 +1,22 @@
-# app.py
+from flask import Flask, request, render_template_string, redirect
 import os
-import smtplib
-import sqlite3
-import uuid
-from flask import Flask, request, redirect, render_template, url_for
-from email.mime.text import MIMEText
 import stripe
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 
-from flask import render_template_string
+# Load secrets from environment variables
+EMAIL_USER = os.environ.get("EMAIL_USER")
+EMAIL_PASS = os.environ.get("EMAIL_PASS")
+STRIPE_SECRET = os.environ.get("STRIPE_SECRET")
+STRIPE_PUBLIC = os.environ.get("STRIPE_PUBLIC")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
+stripe.api_key = STRIPE_SECRET
+
+# Homepage with invoice form
 @app.route("/", methods=["GET"])
 def index():
     html = """
@@ -31,136 +37,89 @@ def index():
     """
     return render_template_string(html)
 
-# === CONFIG ===
-DATABASE = "invoices.db"
-EMAIL_USER = os.getenv("EMAIL_USER")  # your Gmail
-EMAIL_PASS = os.getenv("EMAIL_PASS")  # Gmail app password
-STRIPE_SECRET = os.getenv("STRIPE_SECRET")  # Stripe secret key
-STRIPE_PUBLIC = os.getenv("STRIPE_PUBLIC")  # Stripe publishable key
-
-stripe.api_key = STRIPE_SECRET
-
-# === DB INIT ===
-def init_db():
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS invoices (
-            id TEXT PRIMARY KEY,
-            customer_email TEXT,
-            amount INTEGER,
-            status TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# === ROUTES ===
-@app.route("/")
-def index():
-    return "Invoice App Running!"
-
+# Handle invoice creation
 @app.route("/create_invoice", methods=["POST"])
 def create_invoice():
-    email = request.form["email"]
-    amount = int(request.form["amount"])  # in cents
-    invoice_id = str(uuid.uuid4())
+    email = request.form.get("email")
+    amount = int(request.form.get("amount"))
 
-    # Store invoice
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute("INSERT INTO invoices VALUES (?, ?, ?, ?)",
-              (invoice_id, email, amount, "unpaid"))
-    conn.commit()
-    conn.close()
-
-    # Send email with pay link
-    link = request.url_root + "pay/" + invoice_id
-    msg = MIMEText(f"Hello! Please pay your invoice here: {link}")
-    msg["Subject"] = "Your Invoice"
-    msg["From"] = EMAIL_USER
-    msg["To"] = email
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL_USER, EMAIL_PASS)
-        server.send_message(msg)
-
-    return f"Invoice created and sent to {email}!"
-
-@app.route("/pay/<invoice_id>")
-def pay(invoice_id):
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute("SELECT amount, status FROM invoices WHERE id=?", (invoice_id,))
-    row = c.fetchone()
-    conn.close()
-
-    if not row:
-        return "Invoice not found", 404
-    amount, status = row
-
-    if status == "paid":
-        return "Invoice already paid!"
-
-    # Create Stripe Checkout session
+    # ---------------------------
+    # 1. Create Stripe Checkout session
+    # ---------------------------
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{
             "price_data": {
                 "currency": "usd",
-                "product_data": {"name": "Invoice Payment"},
+                "product_data": {"name": f"Invoice for {email}"},
                 "unit_amount": amount,
             },
             "quantity": 1,
         }],
         mode="payment",
-        success_url=request.url_root + f"success/{invoice_id}",
-        cancel_url=request.url_root + f"pay/{invoice_id}",
+        success_url=f"https://{os.environ.get('RENDER_EXTERNAL_URL')}/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"https://{os.environ.get('RENDER_EXTERNAL_URL')}/cancel",
     )
-    return redirect(session.url, code=303)
 
-@app.route("/success/<invoice_id>")
-def success(invoice_id):
-    # Mark invoice as paid
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute("UPDATE invoices SET status='paid' WHERE id=?", (invoice_id,))
-    conn.commit()
-    conn.close()
-    return "Thank you! Your invoice has been paid."
-
-# Webhook endpoint for Stripe
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    payload = request.data
-    sig = request.headers.get("Stripe-Signature")
-    endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    # ---------------------------
+    # 2. Send email with Pay link
+    # ---------------------------
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Your Invoice"
+    msg["From"] = EMAIL_USER
+    msg["To"] = email
+    html_content = f"""
+    <html>
+      <body>
+        <p>Hello,</p>
+        <p>You have an invoice of ${amount/100:.2f}.</p>
+        <p>Click the button below to pay:</p>
+        <a href="{session.url}" style="padding:10px 20px; background:#4CAF50; color:white; text-decoration:none; border-radius:5px;">
+          Pay Invoice
+        </a>
+      </body>
+    </html>
+    """
+    msg.attach(MIMEText(html_content, "html"))
 
     try:
-        event = stripe.Webhook.construct_event(payload, sig, endpoint_secret)
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.sendmail(EMAIL_USER, email, msg.as_string())
+        server.quit()
     except Exception as e:
-        return str(e), 400
+        print("Email sending failed:", e)
 
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        # Find invoice by success_url
-        if "success/" in session["success_url"]:
-            invoice_id = session["success_url"].split("success/")[-1]
-            conn = sqlite3.connect(DATABASE)
-            c = conn.cursor()
-            c.execute("UPDATE invoices SET status='paid' WHERE id=?", (invoice_id,))
-            conn.commit()
-            conn.close()
-    return "ok", 200
+    # ---------------------------
+    # 3. Confirmation page
+    # ---------------------------
+    html = f"""
+    <html>
+      <body style="font-family: Arial; max-width: 500px; margin:auto; padding:20px;">
+        <h2>Invoice Sent!</h2>
+        <p>Invoice for ${amount/100:.2f} has been sent to {email}.</p>
+        <a href="/" style="padding:10px 20px; background:#4CAF50; color:white; text-decoration:none; border-radius:5px;">
+          Send Another Invoice
+        </a>
+      </body>
+    </html>
+    """
+    return render_template_string(html)
 
-import os
+# Success page after Stripe payment
+@app.route("/success")
+def success():
+    return "<h2>Thank you! Your payment was successful.</h2>"
 
+# Cancel page if payment fails
+@app.route("/cancel")
+def cancel():
+    return "<h2>Payment canceled. You can try again.</h2>"
+
+# Run app on Render or locally
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Render gives us a port
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
-
 
 
