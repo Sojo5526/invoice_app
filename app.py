@@ -44,8 +44,11 @@ def create_invoice():
     amount = int(request.form.get("amount"))
 
     # ---------------------------
-    # 1. Create Stripe Checkout session
+    # 1. Stripe Checkout session
     # ---------------------------
+    # Replace this with your actual Render URL
+    RENDER_URL = "http://invoice-app-eou7.onrender.com/"  # <-- put your real Render URL here
+
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{
@@ -57,8 +60,8 @@ def create_invoice():
             "quantity": 1,
         }],
         mode="payment",
-        success_url=f"https://{os.environ.get('RENDER_EXTERNAL_URL')}/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"https://{os.environ.get('RENDER_EXTERNAL_URL')}/cancel",
+        success_url=f"https://{RENDER_URL}/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"https://{RENDER_URL}/cancel",
     )
 
     # ---------------------------
@@ -107,6 +110,7 @@ def create_invoice():
     """
     return render_template_string(html)
 
+
 # Success page after Stripe payment
 @app.route("/success")
 def success():
@@ -121,5 +125,6 @@ def cancel():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
 
 
