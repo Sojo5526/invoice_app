@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, redirect
+from flask import Flask, request, render_template_string
 import os
 import stripe
 import smtplib
@@ -7,14 +7,16 @@ from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 
-# Load secrets from environment variables
-EMAIL_USER = os.environ.get("EMAIL_USER")
-EMAIL_PASS = os.environ.get("EMAIL_PASS")
+# Environment variables
+EMAIL_USER = os.environ.get("EMAIL_USER")      # Your Gmail
+EMAIL_PASS = os.environ.get("EMAIL_PASS")      # Gmail App Password
 STRIPE_SECRET = os.environ.get("STRIPE_SECRET")
 STRIPE_PUBLIC = os.environ.get("STRIPE_PUBLIC")
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
 stripe.api_key = STRIPE_SECRET
+
+# Replace this with your actual Render URL (no https://)
+RENDER_URL = "https://invoice-app-eou7.onrender.com/"
 
 # Homepage with invoice form
 @app.route("/", methods=["GET"])
@@ -43,12 +45,7 @@ def create_invoice():
     email = request.form.get("email")
     amount = int(request.form.get("amount"))
 
-    # ---------------------------
-    # 1. Stripe Checkout session
-    # ---------------------------
-    # Replace this with your actual Render URL
-    RENDER_URL = "http://invoice-app-eou7.onrender.com/"  # <-- put your real Render URL here
-
+    # 1. Create Stripe Checkout session
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{
@@ -64,9 +61,7 @@ def create_invoice():
         cancel_url=f"https://{RENDER_URL}/cancel",
     )
 
-    # ---------------------------
     # 2. Send email with Pay link
-    # ---------------------------
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "Your Invoice"
     msg["From"] = EMAIL_USER
@@ -94,9 +89,7 @@ def create_invoice():
     except Exception as e:
         print("Email sending failed:", e)
 
-    # ---------------------------
     # 3. Confirmation page
-    # ---------------------------
     html = f"""
     <html>
       <body style="font-family: Arial; max-width: 500px; margin:auto; padding:20px;">
@@ -110,7 +103,6 @@ def create_invoice():
     """
     return render_template_string(html)
 
-
 # Success page after Stripe payment
 @app.route("/success")
 def success():
@@ -121,10 +113,27 @@ def success():
 def cancel():
     return "<h2>Payment canceled. You can try again.</h2>"
 
+# Stripe webhook (optional, for marking invoices as paid)
+@app.route("/webhook", methods=["POST"])
+def stripe_webhook():
+    import stripe
+    payload = request.data
+    sig_header = request.headers.get("Stripe-Signature")
+    STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except ValueError:
+        return "Invalid payload", 400
+    except stripe.error.SignatureVerificationError:
+        return "Invalid signature", 400
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        print(f"Payment successful for session ID: {session['id']}")
+
+    return "", 200
+
 # Run app on Render or locally
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
-
-
