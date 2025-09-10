@@ -12,11 +12,10 @@ EMAIL_USER = os.environ.get("EMAIL_USER")      # Your Gmail
 EMAIL_PASS = os.environ.get("EMAIL_PASS")      # Gmail App Password
 STRIPE_SECRET = os.environ.get("STRIPE_SECRET")
 STRIPE_PUBLIC = os.environ.get("STRIPE_PUBLIC")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+RENDER_URL = os.environ.get("RENDER_URL")      # Should be https://invoice-app-eou7.onrender.com
 
 stripe.api_key = STRIPE_SECRET
-
-# Replace this with your actual Render URL (no https://)
-RENDER_URL = "https://invoice-app-eou7.onrender.com/"
 
 # Homepage with invoice form
 @app.route("/", methods=["GET"])
@@ -57,8 +56,8 @@ def create_invoice():
             "quantity": 1,
         }],
         mode="payment",
-        success_url=f"https://{RENDER_URL}/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"https://{RENDER_URL}/cancel",
+        success_url=f"{RENDER_URL}/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{RENDER_URL}/cancel",
     )
 
     # 2. Send email with Pay link
@@ -113,13 +112,12 @@ def success():
 def cancel():
     return "<h2>Payment canceled. You can try again.</h2>"
 
-# Stripe webhook (optional, for marking invoices as paid)
+# Stripe webhook (optional)
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     import stripe
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
-    STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError:
@@ -137,3 +135,4 @@ def stripe_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
