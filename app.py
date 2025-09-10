@@ -8,6 +8,27 @@ from email.mime.text import MIMEText
 import stripe
 
 app = Flask(__name__)
+from flask import render_template_string
+
+@app.route("/", methods=["GET"])
+def index():
+    html = """
+    <html>
+      <body style="font-family: Arial; max-width: 500px; margin:auto; padding:20px;">
+        <h2>Create Invoice</h2>
+        <form action="/create_invoice" method="POST">
+          <label>Email:</label><br>
+          <input type="email" name="email" placeholder="Customer Email" required style="width:100%; padding:8px; margin-bottom:10px;"><br>
+          <label>Amount (in cents):</label><br>
+          <input type="number" name="amount" placeholder="5000 = $50.00" required style="width:100%; padding:8px; margin-bottom:10px;"><br>
+          <button type="submit" style="padding:10px 20px; background:#4CAF50; color:white; border:none; border-radius:5px;">
+            Send Invoice
+          </button>
+        </form>
+      </body>
+    </html>
+    """
+    return render_template_string(html)
 
 # === CONFIG ===
 DATABASE = "invoices.db"
@@ -138,5 +159,6 @@ import os
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))  # Render gives us a port
     app.run(host="0.0.0.0", port=port, debug=True)
+
 
 
